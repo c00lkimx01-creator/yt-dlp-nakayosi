@@ -21,261 +21,41 @@ app.use(
 );
 
 // =========================================================
-// Invidious instances（cookie 不要・最速ルート）
+// Invidious instances
 // =========================================================
 const INV_INSTANCES = (process.env.INVIDIOUS_INSTANCES ||
   [
     "https://id.420129.xyz",
-    "https://invidious.io",
-    "https://redirect.invidious.io",
-    "https://invidious.snopyta.org",
-    "https://invidious.kavin.rocks",
-    "https://iv.ggtyler.dev",
-    "https://invidious.materialio.us",
-    "https://invidious.lunivers.trade",
-    "https://nyc1.iv.ggtyler.dev",
-    "https://lekker.gay",
-    "https://usa-proxy.poketube.fun",
-    "https://usa-proxy2.poketube.fun",
-    "https://iv.duti.dev",
-    "https://pol1.iv.ggtyler.dev",
-    "https://youtube.mosesmang.com",
-    "https://iteroni.com",
-    "https://invidious.0011.lt",
-    "https://iv.melmac.space",
-    "https://rust.oskamp.nl",
-    "https://invid-api.poketube.fun",
     "https://invidious.f5.si",
-    "https://eu-proxy.poketube.fun",
+    "https://iv.ggtyler.dev",
+    "https://nyc1.iv.ggtyler.dev",
     "https://cal1.iv.ggtyler.dev",
-    "https://siawaseok-wakame-server2.glitch.me",
-    "https://invidious.nietzospannend.nl",
-    "https://yewtu.be",
-    "https://vid.puffyan.us",
-    "https://wataamee.glitch.me",
-    "https://heddohondayo.glitch.me",
-    "https://youtube-googlevideo.glitch.me",
-    "https://natural-voltaic-titanium.glitch.me",
-    "https://wtserver1.glitch.me",
-    "https://wtserver2.glitch.me",
-    "https://wtserver3.glitch.me",
-    "https://watawata8.glitch.me",
-    "https://watawata7.glitch.me",
-    "https://watawata37.glitch.me",
-    "https://watawatawata.glitch.me",
-    "https://amenable-charm-lute.glitch.me",
-    "https://battle-deciduous-bear.glitch.me",
-    "https://productive-noon-van.glitch.me",
-    "https://balsam-secret-fine.glitch.me",
-    "https://eviter-server.glitch.me",
-    "https://eviter-server-2.glitch.me",
-    "https://youtube.privacyplz.org",
-    "https://inv.zzls.xyz",
-    "https://invidious.einfachzocken.eu",
-    "https://piped.video",
-    "https://cuddly.tube",
-    "https://safetwitch.darkness.services",
-    "https://piped.reallyaweso.me",
+    "https://pol1.iv.ggtyler.dev",
     "https://invidious.nerdvpn.de",
     "https://inv1.nadeko.net",
     "https://inv2.nadeko.net",
     "https://inv3.nadeko.net",
     "https://inv4.nadeko.net",
-    "https://inv5.nadeko.net",
-    "https://invidioys.lunivers.trade",
-    "https://invidious.schenkel.eti.br",
-    "https://y.com.sb",
-    "https://invidious.ritoge.com",
-    "https://invididious.exma.de",
-    "https://raagstream.us.kg",
-    "https://youtube.alt.tyil.nl",
-    "https://yt.cdsp.cz",
-    "https://inv.antopie.org",
-    "https://invidious.baczek.me",
-    "https://invidious.jing.rocks",
-    "https://inv.vern.cc",
-    "https://invi.susurrando.com",
-    "https://invidious.epicsite.xyz",
-    "https://invidious.esmailelbob.xyz",
-    "https://invidious.garudalinux.org",
-    "https://invidious.lidarshield.cloud",
-    "https://invidious.lunar.icu",
-    "https://yt-us.discard.no",
-    "https://invidious.privacydev.net",
-    "https://invidious.sethforprivacy.com",
-    "https://invidious.slipfox.xyz",
-    "https://yt-no.discard.no",
-    "https://invidious.tiekoetter.com",
-    "https://invidious.vpsburti.com",
-    "https://invidious.weblibre.org",
-    "https://invidious.pufe.org",
-    "https://watch.thekitty.zone",
-    "https://youtube.moe.ngo",
-    "https://yt.31337.one",
-    "https://yt.funami.tech",
-    "https://yt.oelrichsgarcia.de",
-    "https://yt.wkwkwk.fun",
-    "https://youtube.076.ne.jp",
-    "https://invidious.projectsegfau.lt",
-    "https://invidious.fdn.fr",
-    "https://i.oyster.men",
-    "https://invidious.domain.glass",
-    "https://inv.skrep.eu",
-    "https://clips.im.allmendenetz.de",
-    "https://ytb.trom.tf",
-    "https://invidious.pcgamingfreaks.at",
-    "https://youtube.notrack.ch",
-    "https://iv.ok0.org",
-    "https://youtube.vpn-home-net.de",
-    "http://144.126.251.186",
-    "https://invidious.citizen4.eu",
-    "https://yt.sebaorrego.net",
-    "https://invidious.pesso.al",
-    "https://invidious.manasiwibi.com",
-    "https://toob.unternet.org",
-    "https://invidious.varishangout.net",
-    "https://invidio.xamh.de",
-    "https://yt.tesaguri.club",
-    "https://video.francevpn.fr",
-    "https://inv.in.projectsegfau.lt",
-    "https://invid.nevaforget.de",
-    "https://tube.foss.wtf",
-    "https://invidious.777.tf",
-    "https://inv.tux.pizza",
-    "https://invidious.osi.kr",
-    "https://inv.riverside.rocks",
-    "https://inv.bp.mutahar.rocks",
-    "https://invidious.namazso.eu",
-    "https://tube.cthd.icu",
-    "https://invidious.privacy.gd",
-    "https://invidious-us.kavin.rocks",
-    "https://invidious.mutahar.rocks",
-    "https://invidious.zee.li",
-    "https://tube.connect.cafe",
-    "https://invidious.zapashcanon.fr",
-    "https://invidious.poast.org",
-    "https://invidious.froth.zone",
-    "https://invidious.sp-codes.de",
-    "https://yt.512mb.org",
-    "https://tube.meowz.moe",
-    "https://invidious.frbin.com",
-    "https://dev.invidio.us",
-    "https://invidious.site",
-    "https://invidious.stemy.me",
-    "https://betamax.cybre.club",
-    "https://invidious.com",
-    "https://invidious.not.futbol",
-    "https://yt.artemislena.eu",
-    "https://invidious.dhusch.de",
-    "https://inv.odyssey346.dev",
-    "https://nosebs.ru",
-    "https://adminforge.de",
-    "https://piped.yt",
-    "https://drgns.space",
-    "https://ducks.party",
-    "https://reallyaweso.me",
-    "https://private.coffee",
-    "https://orangenet.cc",
-    "https://inv.trolling.dev",
-    "https://invidious.drivet.xyz",
-    "https://invidious.flokinet.to",
-    "https://invidious.marcopisco.com",
-    "https://invidious.rhyshl.live",
-    "https://invidious.silur.me",
-    "https://vid.priv.au",
-    "https://invidious.vern.cc",
-    "https://invidious.grimneko.de",
-    "https://invidious.chunboan.zone",
-    "https://invidious.ethibox.fr",
-    "https://invidious.onion.love",
-    "https://iv.catgirl.cloud",
-    "https://invidious.rndsh.it:8443",
-    "https://subscriptions.gir.st",
-    "https://vro.omcat.info",
-    "https://video.weiler.rocks",
-    "https://yt.thechangebook.org",
-    "https://yt.leverenz.email",
-    "https://yt.beparanoid.de",
-    "https://monocles.live",
-    "https://youtube.it-service-schopfheim.de",
-    "https://invidious.2br02b.live",
-    "https://discordjp.cc",
-    "https://invidious.longtime.duckdns.org",
-    "https://test.invidious.io",
-    "https://ytclient.antaresx.ch",
-    "https://youtube.noogle.gay",
-    "https://youtube.stowwe.pw",
-    "https://tube.netflix",
-    "https://185.233.104.172:8443",
-    "https://inv.us.projectsegfau.lt",
-    "https://youtube.longtime.duckdns.org",
-    "https://aids.coronachan.tk",
-    "https://invidious.myachin.xyz",
-    "https://tube.mha.fi",
-    "https://inv.bp.projectsegfau.lta",
-    "https://inv.frail.duckdns.org",
-    "https://invidious.fi",
-    "https://inv.pistasjis.net",
-    "https://yt.vern.cc",
-    "https://yt.yoc.ovh",
-    "https://invidious.rndsh.it",
-    "https://yt.femboy.hu",
-    "https://185.233.104.172",
-    "https://invidious.pussthecat.org",
-    "https://invidious.qwik.space",
-    "https://youtube.lurkmore.com",
-    "https://tube.netflux.io",
-    "https://invidious.nantuapan.loginto.me",
-    "https://ytb.alexio.tf",
-    "https://invidious.instance.no",
-    "https://in.fnky.nz",
-    "https://yt.floss.media",
-    "https://invidious.nogafa.org",
-    "https://invidious.lukgth.cloud",
-    "https://tv.metaversum.wtf",
-    "https://invidious.palejev.dscloud.me",
-    "https://invidious.notraxx.ch",
-    "https://yt.tjm.sk",
-    "https://super8.absturztau.be",
-    "https://invidious.zxspectrummail.net",
-    "https://ytb.best-server.info",
-    "https://inv.citw.lgbt",
-    "https://invidious.protokolla.fi",
-    "https://iv.fmac.xyz",
-    "https://not-ytb.blocus.ch",
-    "https://onion.tube",
-    "https://yt.fascinated.cc",
-    "https://invidious.zecircle.xyz",
-    "https://inv.qilk.de",
-    "https://inv.kamuridesu.com",
-    "https://invidious.catspeed.cc",
-    "https://inv.owo.si",
-    "https://youtube.-privacyplz.org",
-    "https://youtube-privacyplz.org",
-    "https://invidious.nikkosphere.com",
-    "https://nyc1.iv.ggttyler.dev",
-    "https://cal11.iv.ggttyler.dev",
-    "https://iv.datura.network",
+    "https://yewtu.be",
+    "https://invidious.privacyredirect.com",
     "https://invidious.private.coffee",
     "https://invidious.perennialte.ch",
-    "https://yt.cdaut.de",
-    "https://invidious.privacyredirect.com",
-    "https://invidious.drgns.space",
-    "https://inv.privacy.com.de",
-    "https://yt.drgnz.club",
-    "https://yt.bromine35.me",
-    "https://hyperpipe.surge.sh",
-    "https://watch.leptons.xyz",
-    "https://iv-duti-dev.zproxy.org",
-    "https://inv1-nadeko-net.zproxy.org",
-    "https://inv2-nadeko-net.zproxy.org",
-    "https://inv3-nadeko-net.zproxy.org",
-    "https://inv4-nadeko-net.zproxy.org",
-    "https://invidious-f5-si.zproxy.org",
     "https://invidious.reallyaweso.me",
+    "https://iv.datura.network",
+    "https://iv.duti.dev",
+    "https://iv.melmac.space",
     "https://iv.nboeck.de",
     "https://yt.omada.cafe",
-    "https://inv.thepixora.com"
+    "https://invidious.einfachzocken.eu",
+    "https://invidious.tiekoetter.com",
+    "https://invidious.jing.rocks",
+    "https://invidious.materialio.us",
+    "https://invidious.lunivers.trade",
+    "https://iteroni.com",
+    "https://invidious.0011.lt",
+    "https://invidious.projectsegfau.lt",
+    "https://invidious.fdn.fr",
+    "https://invidious.protokolla.fi"
   ].join(","))
   .split(",")
   .map((s) => s.trim())
@@ -287,7 +67,6 @@ function fetchWithTimeout(url, ms = 6000) {
   return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
 }
 
-// manifest テキストから googlevideo URL を抽出
 function extractGooglevideoUrls(text) {
   if (!text || typeof text !== "string") return [];
   const re = /https?:\/\/[^\s"'<>]*googlevideo\.com\/[^\s"'<>]+/g;
@@ -304,7 +83,23 @@ async function fetchManifestUrls(url, timeout = 6000) {
   } catch { return []; }
 }
 
-// Invidious /api/v1/videos/:id から googlevideo 直リンクを抽出
+// mimeType / itag から kind を判定: "muxed" | "video" | "audio"
+function classifyFormat(f, fallbackLabel) {
+  const mime = (f.type || f.mimeType || "").toLowerCase();
+  const hasV = mime.startsWith("video/");
+  const hasA = mime.startsWith("audio/") || !!f.audioQuality || !!f.audioSampleRate;
+  // muxed (formatStreams) は audio+video 同梱
+  if (fallbackLabel === "muxed") return "muxed";
+  if (mime.startsWith("video/") && /codecs=.*(mp4a|opus|ac-3|vorbis)/.test(mime)) return "muxed";
+  if (hasV && !hasA) return "video";
+  if (hasA && !hasV) return "audio";
+  if (hasV && hasA) return "muxed";
+  // フォールバック: itag 既知の音声 itag
+  const audioItags = new Set([139, 140, 141, 171, 249, 250, 251, 256, 258, 327, 338]);
+  if (audioItags.has(Number(f.itag))) return "audio";
+  return fallbackLabel || "unknown";
+}
+
 async function tryInvidious(videoId, perTimeout = 6000) {
   return await new Promise((resolve) => {
     let remaining = INV_INSTANCES.length;
@@ -327,18 +122,23 @@ async function tryInvidious(videoId, perTimeout = 6000) {
           const urls = [];
           const manifests = [];
 
-          const pushFmts = (arr, label) => {
+          const pushFmts = (arr, fallbackLabel) => {
             if (!Array.isArray(arr)) return;
             for (const f of arr) {
-              if (f && f.url && /googlevideo\.com/.test(f.url)) {
-                urls.push({
-                  url: f.url,
-                  type: label,
-                  itag: f.itag,
-                  quality: f.qualityLabel || f.quality || f.resolution,
-                  bitrate: parseInt(f.bitrate || 0) || undefined,
-                });
-              }
+              if (!f || !f.url || !/googlevideo\.com/.test(f.url)) continue;
+              const kind = classifyFormat(f, fallbackLabel);
+              const mime = (f.type || f.mimeType || "").split(";")[0];
+              urls.push({
+                url: f.url,
+                kind, // muxed | video | audio
+                type: kind,
+                mime,
+                itag: f.itag,
+                container: f.container,
+                quality: f.qualityLabel || f.quality || f.resolution,
+                audioQuality: f.audioQuality,
+                bitrate: parseInt(f.bitrate || 0) || undefined,
+              });
             }
           };
           pushFmts(j.formatStreams, "muxed");
@@ -346,18 +146,6 @@ async function tryInvidious(videoId, perTimeout = 6000) {
 
           if (j.hlsUrl) manifests.push({ url: j.hlsUrl, type: "hls" });
           if (j.dashUrl) manifests.push({ url: j.dashUrl, type: "dash" });
-
-          // manifest 内部からも googlevideo を抽出（並列、失敗は無視）
-          const extracted = await Promise.all(
-            manifests.map((m) => fetchManifestUrls(m.url, perTimeout))
-          );
-          extracted.forEach((list, i) => {
-            for (const u of list) {
-              if (!urls.find((x) => x.url === u)) {
-                urls.push({ url: u, type: `from-${manifests[i].type}` });
-              }
-            }
-          });
 
           // sort: highest bitrate first
           urls.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
@@ -481,7 +269,7 @@ const setCache = (id, payload) =>
 const inflight = new Map();
 
 // =========================================================
-// yt-dlp（manifest 優先）
+// yt-dlp（muxed best + bestaudio を両方取得）
 // =========================================================
 function tryYtDlp(args, timeoutMs = 12000) {
   return new Promise((resolve) => {
@@ -496,9 +284,12 @@ function tryYtDlp(args, timeoutMs = 12000) {
     yt.on("error", (e) => { clearTimeout(timer); done({ ok: false, err: String(e?.message || e) }); });
     yt.on("close", (code) => {
       clearTimeout(timer);
-      const url = out.trim().split("\n").filter(Boolean)[0];
-      if (code === 0 && url && /^https?:\/\//.test(url)) done({ ok: true, url });
-      else done({ ok: false, err: err.trim().slice(0, 300) || `exit ${code}` });
+      const lines = out.trim().split("\n").map(s => s.trim()).filter(Boolean);
+      if (code === 0 && lines.length && /^https?:\/\//.test(lines[0])) {
+        done({ ok: true, urls: lines });
+      } else {
+        done({ ok: false, err: err.trim().slice(0, 300) || `exit ${code}` });
+      }
     });
   });
 }
@@ -518,12 +309,12 @@ async function ytDlpManifest(videoId) {
     return a;
   };
 
-  // ios/android クライアントは HLS manifest を返しやすい
+  // muxed (audio+video 同梱) 優先 + フォールバックで bestvideo+bestaudio (2URL)
   const tasks = [
-    tryYtDlp([...baseArgs("ios"), "-f", "best", url], 12000),
-    tryYtDlp([...baseArgs("android"), "-f", "best", url], 12000),
+    tryYtDlp([...baseArgs("ios"), "-f", "best[acodec!=none][vcodec!=none]/best", url], 12000),
+    tryYtDlp([...baseArgs("android"), "-f", "best[acodec!=none][vcodec!=none]/best", url], 12000),
     tryYtDlp([...baseArgs("web_safari"), "-f", "best[protocol^=m3u8]/best", url], 12000),
-    tryYtDlp([...baseArgs("tv_embedded"), "-f", "best", url], 12000),
+    tryYtDlp([...baseArgs("ios"), "-f", "bestvideo+bestaudio/best", url], 14000),
   ];
 
   return await new Promise((resolve) => {
@@ -535,19 +326,24 @@ async function ytDlpManifest(videoId) {
         if (settled) return;
         if (r.ok) {
           settled = true;
-          const isManifest = r.url.includes(".m3u8") || r.url.includes(".mpd");
-          const manifests = isManifest
-            ? [{ url: r.url, type: r.url.includes(".m3u8") ? "hls" : "dash" }]
-            : [];
-          const urls = [];
-          if (/googlevideo\.com/.test(r.url) && !isManifest) {
-            urls.push({ url: r.url, type: "direct" });
+          const out = { urls: [], manifests: [], source: "yt-dlp" };
+          // 1本目=video(またはmuxed)、2本目があれば audio
+          const [first, second] = r.urls;
+          const isManifest = (u) => u.includes(".m3u8") || u.includes(".mpd");
+
+          if (isManifest(first)) {
+            out.manifests.push({ url: first, type: first.includes(".m3u8") ? "hls" : "dash" });
+            const extracted = await fetchManifestUrls(first, 6000);
+            for (const u of extracted) out.urls.push({ url: u, kind: "from-manifest", type: "from-manifest" });
+          } else if (second) {
+            // 2URL = video-only + audio-only
+            out.urls.push({ url: first, kind: "video", type: "video" });
+            out.urls.push({ url: second, kind: "audio", type: "audio" });
+          } else {
+            // 1URL = muxed (audio+video 同梱)
+            out.urls.push({ url: first, kind: "muxed", type: "muxed" });
           }
-          if (isManifest) {
-            const extracted = await fetchManifestUrls(r.url, 6000);
-            for (const u of extracted) urls.push({ url: u, type: `from-${manifests[0].type}` });
-          }
-          return resolve({ ok: true, urls, manifests, source: "yt-dlp" });
+          return resolve({ ok: true, ...out });
         }
         lastErr = r.err || lastErr;
       }).finally(() => {
@@ -559,7 +355,7 @@ async function ytDlpManifest(videoId) {
 }
 
 // =========================================================
-// 統合: Invidious -> yt-dlp の順で並列気味に
+// 統合
 // =========================================================
 async function getStream(videoId) {
   const invP = tryInvidious(videoId, 6000);

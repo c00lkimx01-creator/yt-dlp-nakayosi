@@ -44,13 +44,16 @@
       }
       .copy { cursor: pointer; color: #9ca3af; background: none; border: none; padding: 0 4px; }
       .err { color: #f87171; }
-      video { width: 100%; margin-top: 16px; border-radius: 10px; background: #000; }
+      .player { position: relative; margin-top: 16px; }
+      video { width: 100%; border-radius: 10px; background: #000; }
+      .player audio { display: none; }
+      .hint { margin-top: 6px; font-size: 12px; color: #9ca3af; }
     </style>
   </head>
   <body>
     <div class="card">
       <h1>YouTube googlevideo Resolver</h1>
-      <p class="sub">Video ID を入力すると manifest 内の googlevideo 直リンクを一覧表示します。</p>
+      <p class="sub">Video ID を入力すると映像/音声/混合の googlevideo URL を取得します。</p>
       <form id="f" class="row">
         <input id="id" placeholder="例: dQw4w9WgXcQ" autocomplete="off" required />
         <button id="go" type="submit">取得</button>
@@ -64,8 +67,48 @@
       const result = document.getElementById("result");
 
       function row(u) {
-        const tag = u.type ? `<span class="tag">${u.type}${u.itag ? " · itag " + u.itag : ""}${u.quality ? " · " + u.quality : ""}</span>` : "";
+        const bits = [];
+        if (u.kind || u.type) bits.push(u.kind || u.type);
+        if (u.itag) bits.push("itag " + u.itag);
+        if (u.quality) bits.push(u.quality);
+        if (u.audioQuality) bits.push(u.audioQuality);
+        if (u.bitrate) bits.push(Math.round(u.bitrate/1000) + "kbps");
+        const tag = bits.length ? `<span class="tag">${bits.join(" · ")}</span>` : "";
         return `<div class="url-box">${tag}<a href="${u.url}" target="_blank" rel="noreferrer">${u.url}</a><button class="copy" data-u="${encodeURIComponent(u.url)}" title="copy">📋</button></div>`;
+      }
+
+      // 映像と音声を同時再生（DASH分離ストリーム対策）
+      function mountPlayer(videoUrl, audioUrl) {
+        const wrap = document.createElement("div");
+        wrap.className = "player";
+        const v = document.createElement("video");
+        v.src = videoUrl;
+        v.controls = true;
+        v.playsInline = true;
+        wrap.appendChild(v);
+
+        if (audioUrl) {
+          const a = document.createElement("audio");
+          a.src = audioUrl;
+          a.preload = "auto";
+          wrap.appendChild(a);
+          // 同期: 主要イベントを video → audio に転送
+          v.muted = true; // 映像側はミュート、音は audio から
+          v.addEventListener("play",  () => a.play().catch(()=>{}));
+          v.addEventListener("pause", () => a.pause());
+          v.addEventListener("seeking",  () => { a.currentTime = v.currentTime; });
+          v.addEventListener("ratechange", () => { a.playbackRate = v.playbackRate; });
+          v.addEventListener("volumechange", () => { a.volume = v.volume; });
+          v.addEventListener("timeupdate", () => {
+            const drift = Math.abs(a.currentTime - v.currentTime);
+            if (drift > 0.3) a.currentTime = v.currentTime;
+          });
+          const hint = document.createElement("div");
+          hint.className = "hint";
+          hint.textContent = "※ 映像と音声は別ストリームをブラウザで同期再生しています。";
+          wrap.appendChild(hint);
+        }
+        return wrap;
       }
 
       f.addEventListener("submit", async (e) => {
@@ -82,26 +125,40 @@
           if (j.error && (!j.urls || !j.urls.length)) throw new Error(j.error);
 
           const urls = j.urls || [];
-          const manifests = (j.manifests || []);
-          const direct = urls.filter(u => /googlevideo\.com/.test(u.url));
-          const others = urls.filter(u => !/googlevideo\.com/.test(u.url));
+          const manifests = j.manifests || [];
 
-          let html = `<div class="meta">source: ${j.source || "-"} · googlevideo: ${direct.length} · その他: ${others.length} · manifest: ${manifests.length}</div>`;
+          const muxed = urls.filter(u => (u.kind || u.type) === "muxed");
+          const video = urls.filter(u => (u.kind || u.type) === "video");
+          const audio = urls.filter(u => (u.kind || u.type) === "audio");
+          const others = urls.filter(u => !["muxed","video","audio"].includes(u.kind || u.type));
+
+          let html = `<div class="meta">source: ${j.source || "-"} · muxed: ${muxed.length} · video: ${video.length} · audio: ${audio.length} · manifest: ${manifests.length}</div>`;
 
           if (manifests.length) {
-            html += `<div class="group"><h3>Manifest URL</h3>${manifests.map(m => row(m)).join("")}</div>`;
+            html += `<div class="group"><h3>Manifest</h3>${manifests.map(m => row(m)).join("")}</div>`;
           }
-          if (direct.length) {
-            html += `<div class="group"><h3>googlevideo 直リンク</h3>${direct.map(u => row(u)).join("")}</div>`;
+          if (muxed.length) {
+            html += `<div class="group"><h3>映像+音声 (muxed)</h3>${muxed.map(u => row(u)).join("")}</div>`;
+          }
+          if (video.length) {
+            html += `<div class="group"><h3>映像のみ (video)</h3>${video.map(u => row(u)).join("")}</div>`;
+          }
+          if (audio.length) {
+            html += `<div class="group"><h3>音声のみ (audio)</h3>${audio.map(u => row(u)).join("")}</div>`;
           }
           if (others.length) {
             html += `<div class="group"><h3>その他</h3>${others.map(u => row(u)).join("")}</div>`;
           }
 
-          const playable = manifests[0]?.url || direct[0]?.url || urls[0]?.url;
-          if (playable) html += `<video src="${playable}" controls></video>`;
-
           result.innerHTML = html;
+
+          // プレーヤー: muxed があればそれ単体、無ければ video + audio を合成
+          const bestAudio = audio[0]?.url;
+          const bestVideo = muxed[0]?.url || video[0]?.url || manifests[0]?.url;
+          if (bestVideo) {
+            const player = mountPlayer(bestVideo, muxed[0] ? null : bestAudio);
+            result.appendChild(player);
+          }
 
           result.querySelectorAll(".copy").forEach((b) => {
             b.addEventListener("click", () => {
