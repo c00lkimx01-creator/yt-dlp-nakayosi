@@ -309,12 +309,16 @@ async function ytDlpManifest(videoId) {
     return a;
   };
 
-  // muxed (audio+video 同梱) 優先 + フォールバックで bestvideo+bestaudio (2URL)
+  // 日本語音声を優先して取得（無ければ通常のbestにフォールバック）
+  // yt-dlp の format selector は [language=ja] でトラックの言語を絞り込める
+  const JA = "ja";
   const tasks = [
+    // 1) video-only + 日本語 audio-only（最優先：確実に日本語音声）
+    tryYtDlp([...baseArgs("ios"), "-f", `bestvideo+bestaudio[language=${JA}]/bestvideo+bestaudio`, url], 14000),
+    tryYtDlp([...baseArgs("android"), "-f", `bestvideo+bestaudio[language=${JA}]/bestvideo+bestaudio`, url], 14000),
+    // 2) muxed (単一URL) — 言語指定はできないので最後のフォールバック
     tryYtDlp([...baseArgs("ios"), "-f", "best[acodec!=none][vcodec!=none]/best", url], 12000),
-    tryYtDlp([...baseArgs("android"), "-f", "best[acodec!=none][vcodec!=none]/best", url], 12000),
     tryYtDlp([...baseArgs("web_safari"), "-f", "best[protocol^=m3u8]/best", url], 12000),
-    tryYtDlp([...baseArgs("ios"), "-f", "bestvideo+bestaudio/best", url], 14000),
   ];
 
   return await new Promise((resolve) => {
