@@ -20,9 +20,6 @@ app.use(
   express.static(path.join(__dirname, "public"), { maxAge: "1h", etag: true })
 );
 
-// =========================================================
-// Invidious instances
-// =========================================================
 const INV_INSTANCES = (process.env.INVIDIOUS_INSTANCES ||
   [
     "https://id.420129.xyz",
@@ -74,27 +71,31 @@ function extractGooglevideoUrls(text) {
   return Array.from(new Set(found));
 }
 
+function extractM3u8Urls(text) {
+  if (!text || typeof text !== "string") return [];
+  const re = /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/g;
+  const found = text.match(re) || [];
+  return Array.from(new Set(found));
+}
+
 async function fetchManifestUrls(url, timeout = 6000) {
   try {
     const r = await fetchWithTimeout(url, timeout);
-    if (!r.ok) return [];
+    if (!r.ok) return { gv: [], m3u8: [] };
     const text = await r.text();
-    return extractGooglevideoUrls(text);
-  } catch { return []; }
+    return { gv: extractGooglevideoUrls(text), m3u8: extractM3u8Urls(text) };
+  } catch { return { gv: [], m3u8: [] }; }
 }
 
-// mimeType / itag から kind を判定: "muxed" | "video" | "audio"
 function classifyFormat(f, fallbackLabel) {
   const mime = (f.type || f.mimeType || "").toLowerCase();
   const hasV = mime.startsWith("video/");
   const hasA = mime.startsWith("audio/") || !!f.audioQuality || !!f.audioSampleRate;
-  // muxed (formatStreams) は audio+video 同梱
   if (fallbackLabel === "muxed") return "muxed";
   if (mime.startsWith("video/") && /codecs=.*(mp4a|opus|ac-3|vorbis)/.test(mime)) return "muxed";
   if (hasV && !hasA) return "video";
   if (hasA && !hasV) return "audio";
   if (hasV && hasA) return "muxed";
-  // フォールバック: itag 既知の音声 itag
   const audioItags = new Set([139, 140, 141, 171, 249, 250, 251, 256, 258, 327, 338]);
   if (audioItags.has(Number(f.itag))) return "audio";
   return fallbackLabel || "unknown";
@@ -121,6 +122,7 @@ async function tryInvidious(videoId, perTimeout = 6000) {
 
           const urls = [];
           const manifests = [];
+          const urls_m3u8 = [];
 
           const pushFmts = (arr, fallbackLabel) => {
             if (!Array.isArray(arr)) return;
@@ -130,7 +132,7 @@ async function tryInvidious(videoId, perTimeout = 6000) {
               const mime = (f.type || f.mimeType || "").split(";")[0];
               urls.push({
                 url: f.url,
-                kind, // muxed | video | audio
+                kind,
                 type: kind,
                 mime,
                 itag: f.itag,
@@ -144,16 +146,15 @@ async function tryInvidious(videoId, perTimeout = 6000) {
           pushFmts(j.formatStreams, "muxed");
           pushFmts(j.adaptiveFormats, "adaptive");
 
-          if (j.hlsUrl) manifests.push({ url: j.hlsUrl, type: "hls" });
+          if (j.hlsUrl) urls_m3u8.push({ url: j.hlsUrl, type: "hls", kind: "hls" });
           if (j.dashUrl) manifests.push({ url: j.dashUrl, type: "dash" });
 
-          // sort: highest bitrate first
           urls.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
 
-          if (urls.length || manifests.length) {
+          if (urls.length || manifests.length || urls_m3u8.length) {
             if (settled) return;
             settled = true;
-            return resolve({ ok: true, urls, manifests, source: base });
+            return resolve({ ok: true, urls, manifests, urls_m3u8, source: base });
           }
           throw new Error(`${base} -> empty`);
         })
@@ -168,9 +169,6 @@ async function tryInvidious(videoId, perTimeout = 6000) {
   });
 }
 
-// =========================================================
-// Cookie 自動取得（yt-dlp フォールバック用）
-// =========================================================
 const MANUAL_COOKIE = path.join(__dirname, "cookie.txt");
 const AUTO_COOKIE = path.join(os.tmpdir(), "yt_auto_cookies.txt");
 let cookiePath = null;
@@ -253,9 +251,6 @@ async function ensureCookies() {
 
 refreshCookies().catch(() => {});
 
-// =========================================================
-// キャッシュ & in-flight
-// =========================================================
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const cache = new Map();
 const getCache = (id) => {
@@ -268,9 +263,6 @@ const setCache = (id, payload) =>
   cache.set(id, { ...payload, expires: Date.now() + CACHE_TTL_MS });
 const inflight = new Map();
 
-// =========================================================
-// yt-dlp（muxed best + bestaudio を両方取得）
-// =========================================================
 function tryYtDlp(args, timeoutMs = 12000) {
   return new Promise((resolve) => {
     let yt;
@@ -309,14 +301,10 @@ async function ytDlpManifest(videoId) {
     return a;
   };
 
-  // 日本語音声を優先して取得（無ければ通常のbestにフォールバック）
-  // yt-dlp の format selector は [language=ja] でトラックの言語を絞り込める
   const JA = "ja";
   const tasks = [
-    // 1) video-only + 日本語 audio-only（最優先：確実に日本語音声）
     tryYtDlp([...baseArgs("ios"), "-f", `bestvideo+bestaudio[language=${JA}]/bestvideo+bestaudio`, url], 14000),
     tryYtDlp([...baseArgs("android"), "-f", `bestvideo+bestaudio[language=${JA}]/bestvideo+bestaudio`, url], 14000),
-    // 2) muxed (単一URL) — 言語指定はできないので最後のフォールバック
     tryYtDlp([...baseArgs("ios"), "-f", "best[acodec!=none][vcodec!=none]/best", url], 12000),
     tryYtDlp([...baseArgs("web_safari"), "-f", "best[protocol^=m3u8]/best", url], 12000),
   ];
@@ -330,21 +318,26 @@ async function ytDlpManifest(videoId) {
         if (settled) return;
         if (r.ok) {
           settled = true;
-          const out = { urls: [], manifests: [], source: "yt-dlp" };
-          // 1本目=video(またはmuxed)、2本目があれば audio
+          const out = { urls: [], manifests: [], urls_m3u8: [], source: "yt-dlp" };
           const [first, second] = r.urls;
-          const isManifest = (u) => u.includes(".m3u8") || u.includes(".mpd");
+          const isM3u8 = (u) => /\.m3u8(\?|$)/i.test(u);
+          const isDash = (u) => /\.mpd(\?|$)/i.test(u);
 
-          if (isManifest(first)) {
-            out.manifests.push({ url: first, type: first.includes(".m3u8") ? "hls" : "dash" });
-            const extracted = await fetchManifestUrls(first, 6000);
-            for (const u of extracted) out.urls.push({ url: u, kind: "from-manifest", type: "from-manifest" });
+          if (isM3u8(first)) {
+            out.urls_m3u8.push({ url: first, type: "hls", kind: "hls" });
+            const ex = await fetchManifestUrls(first, 6000);
+            for (const u of ex.gv) out.urls.push({ url: u, kind: "from-manifest", type: "from-manifest" });
+            for (const u of ex.m3u8) {
+              if (u !== first) out.urls_m3u8.push({ url: u, type: "hls", kind: "hls-variant" });
+            }
+          } else if (isDash(first)) {
+            out.manifests.push({ url: first, type: "dash" });
+            const ex = await fetchManifestUrls(first, 6000);
+            for (const u of ex.gv) out.urls.push({ url: u, kind: "from-manifest", type: "from-manifest" });
           } else if (second) {
-            // 2URL = video-only + audio-only
             out.urls.push({ url: first, kind: "video", type: "video" });
             out.urls.push({ url: second, kind: "audio", type: "audio" });
           } else {
-            // 1URL = muxed (audio+video 同梱)
             out.urls.push({ url: first, kind: "muxed", type: "muxed" });
           }
           return resolve({ ok: true, ...out });
@@ -358,9 +351,6 @@ async function ytDlpManifest(videoId) {
   });
 }
 
-// =========================================================
-// 統合
-// =========================================================
 async function getStream(videoId) {
   const invP = tryInvidious(videoId, 6000);
   const ytP = new Promise((resolve) => setTimeout(() => resolve(ytDlpManifest(videoId)), 1500))
@@ -374,14 +364,11 @@ async function getStream(videoId) {
   return { ok: false, err: inv.err || yt.err || "unknown" };
 }
 
-// =========================================================
-// API
-// =========================================================
 app.get("/api/video/:id", async (req, res) => {
   const { id } = req.params;
   res.setHeader("Cache-Control", "public, max-age=120");
   if (!/^[\w-]{6,20}$/.test(id)) {
-    return res.status(200).json({ id, urls: [], manifests: [], error: "invalid id" });
+    return res.status(200).json({ id, urls: [], manifests: [], urls_m3u8: [], error: "invalid id" });
   }
   try {
     const cached = getCache(id);
@@ -394,13 +381,18 @@ app.get("/api/video/:id", async (req, res) => {
     }
     const r = await p;
     if (r.ok) {
-      const payload = { urls: r.urls || [], manifests: r.manifests || [], source: r.source };
+      const payload = {
+        urls: r.urls || [],
+        manifests: r.manifests || [],
+        urls_m3u8: r.urls_m3u8 || [],
+        source: r.source,
+      };
       setCache(id, payload);
       return res.status(200).json({ id, ...payload });
     }
-    return res.status(200).json({ id, urls: [], manifests: [], error: r.err || "failed" });
+    return res.status(200).json({ id, urls: [], manifests: [], urls_m3u8: [], error: r.err || "failed" });
   } catch (e) {
-    return res.status(200).json({ id, urls: [], manifests: [], error: String(e?.message || e) });
+    return res.status(200).json({ id, urls: [], manifests: [], urls_m3u8: [], error: String(e?.message || e) });
   }
 });
 
