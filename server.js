@@ -1,4 +1,4 @@
-// ============= Updated server.js =============
+// ============= Updated server.js (robust取得版) =============
 import express from "express";
 import compression from "compression";
 import { spawn } from "child_process";
@@ -20,6 +20,14 @@ app.use((req, res, next) => {
 app.use(
   express.static(path.join(__dirname, "public"), { maxAge: "1h", etag: true })
 );
+
+// ============================================================
+// 設定
+// ============================================================
+const UA_DESKTOP =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const UA_IOS =
+  "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5 like Mac OS X)";
 
 const INV_INSTANCES = (process.env.INVIDIOUS_INSTANCES ||
   [
@@ -53,41 +61,52 @@ const INV_INSTANCES = (process.env.INVIDIOUS_INSTANCES ||
     "https://invidious.0011.lt",
     "https://invidious.projectsegfau.lt",
     "https://invidious.fdn.fr",
-    "https://invidious.protokolla.fi"
+    "https://invidious.protokolla.fi",
   ].join(","))
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-function fetchWithTimeout(url, ms = 6000) {
+const PIPED_INSTANCES = (process.env.PIPED_INSTANCES ||
+  [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.tokhmi.xyz",
+    "https://pipedapi.moomoo.me",
+    "https://pipedapi.syncpundit.io",
+    "https://api-piped.mha.fi",
+    "https://piped-api.garudalinux.org",
+    "https://pipedapi.rivo.lol",
+    "https://pipedapi.aeong.one",
+    "https://pipedapi.leptons.xyz",
+    "https://pipedapi.privacydev.net",
+    "https://api.piped.yt",
+    "https://pipedapi.adminforge.de",
+  ].join(","))
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// ============================================================
+// 共通ユーティリティ
+// ============================================================
+function fetchWithTimeout(url, ms = 8000, init = {}) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
-  return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
+  return fetch(url, { ...init, signal: ctrl.signal }).finally(() =>
+    clearTimeout(t)
+  );
 }
 
-function extractGooglevideoUrls(text) {
-  if (!text || typeof text !== "string") return [];
-  const re = /https?:\/\/[^\s"'<>]*googlevideo\.com\/[^\s"'<>]+/g;
-  return Array.from(new Set(text.match(re) || []));
-}
-
-function extractM3u8Urls(text) {
-  if (!text || typeof text !== "string") return [];
-  const re = /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/g;
-  return Array.from(new Set(text.match(re) || []));
-}
-
-async function fetchManifestText(url, timeout = 6000) {
+async function fetchManifestText(url, timeout = 8000) {
   try {
-    const r = await fetchWithTimeout(url, timeout);
+    const r = await fetchWithTimeout(url, timeout, {
+      headers: { "User-Agent": UA_DESKTOP },
+    });
     if (!r.ok) return "";
     return await r.text();
-  } catch { return ""; }
-}
-
-async function fetchManifestUrls(url, timeout = 6000) {
-  const text = await fetchManifestText(url, timeout);
-  return { gv: extractGooglevideoUrls(text), m3u8: extractM3u8Urls(text), text };
+  } catch {
+    return "";
+  }
 }
 
 // HLS master playlist から 1080p variant を抽出
@@ -103,7 +122,9 @@ function pick1080pFromMaster(masterText, masterUrl) {
       const next = (lines[i + 1] || "").trim();
       if (!next || next.startsWith("#")) continue;
       let abs = next;
-      try { abs = new URL(next, masterUrl).toString(); } catch {}
+      try {
+        abs = new URL(next, masterUrl).toString();
+      } catch {}
       variants.push({
         url: abs,
         height: resMatch ? parseInt(resMatch[2], 10) : 0,
@@ -113,110 +134,18 @@ function pick1080pFromMaster(masterText, masterUrl) {
     }
   }
   if (!variants.length) return null;
-  // exact 1080 優先 → なければ最も近い(<=1080優先)
   const exact = variants.find((v) => v.height === 1080);
   if (exact) return exact;
-  const under = variants.filter((v) => v.height && v.height <= 1080).sort((a, b) => b.height - a.height);
+  const under = variants
+    .filter((v) => v.height && v.height <= 1080)
+    .sort((a, b) => b.height - a.height);
   if (under.length) return under[0];
   return variants.sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0))[0];
 }
 
-function classifyFormat(f, fallbackLabel) {
-  const mime = (f.type || f.mimeType || "").toLowerCase();
-  const hasV = mime.startsWith("video/");
-  const hasA = mime.startsWith("audio/") || !!f.audioQuality || !!f.audioSampleRate;
-  if (fallbackLabel === "muxed") return "muxed";
-  if (mime.startsWith("video/") && /codecs=.*(mp4a|opus|ac-3|vorbis)/.test(mime)) return "muxed";
-  if (hasV && !hasA) return "video";
-  if (hasA && !hasV) return "audio";
-  if (hasV && hasA) return "muxed";
-  const audioItags = new Set([139, 140, 141, 171, 249, 250, 251, 256, 258, 327, 338]);
-  if (audioItags.has(Number(f.itag))) return "audio";
-  return fallbackLabel || "unknown";
-}
-
-// 言語判定: ja/en に分類
-function detectLang(f) {
-  const cand =
-    f.language ||
-    f.lang ||
-    f.audioTrack?.id ||
-    f.audioTrack?.displayName ||
-    f.audioTrackId ||
-    "";
-  const s = String(cand).toLowerCase();
-  if (/ja|japanese|日本/.test(s)) return "ja";
-  if (/en|english/.test(s)) return "en";
-  return "";
-}
-
-async function tryInvidious(videoId, perTimeout = 6000) {
-  return await new Promise((resolve) => {
-    let remaining = INV_INSTANCES.length;
-    let lastErr = "";
-    let settled = false;
-    if (remaining === 0) return resolve({ ok: false, err: "no instances" });
-
-    INV_INSTANCES.forEach((base) => {
-      const url = `${base.replace(/\/+$/, "")}/api/v1/videos/${encodeURIComponent(
-        videoId
-      )}?fields=hlsUrl,dashUrl,formatStreams,adaptiveFormats`;
-      fetchWithTimeout(url, perTimeout)
-        .then(async (r) => {
-          if (!r.ok) throw new Error(`${base} -> ${r.status}`);
-          const text = await r.text();
-          let j;
-          try { j = JSON.parse(text); }
-          catch { throw new Error(`${base} -> non-JSON`); }
-
-          const urls = [];
-          const manifests = [];
-          const urls_m3u8 = [];
-
-          const pushFmts = (arr, fallbackLabel) => {
-            if (!Array.isArray(arr)) return;
-            for (const f of arr) {
-              if (!f || !f.url || !/googlevideo\.com/.test(f.url)) continue;
-              const kind = classifyFormat(f, fallbackLabel);
-              const mime = (f.type || f.mimeType || "").split(";")[0];
-              urls.push({
-                url: f.url,
-                kind,
-                type: kind,
-                mime,
-                itag: f.itag,
-                container: f.container,
-                quality: f.qualityLabel || f.quality || f.resolution,
-                audioQuality: f.audioQuality,
-                bitrate: parseInt(f.bitrate || 0) || undefined,
-                language: detectLang(f),
-              });
-            }
-          };
-          pushFmts(j.formatStreams, "muxed");
-          pushFmts(j.adaptiveFormats, "adaptive");
-
-          if (j.hlsUrl) urls_m3u8.push({ url: j.hlsUrl, type: "hls", kind: "hls-master" });
-          if (j.dashUrl) manifests.push({ url: j.dashUrl, type: "dash" });
-
-          urls.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-
-          if (urls.length || manifests.length || urls_m3u8.length) {
-            if (settled) return;
-            settled = true;
-            return resolve({ ok: true, urls, manifests, urls_m3u8, source: base });
-          }
-          throw new Error(`${base} -> empty`);
-        })
-        .catch((e) => { lastErr = String(e?.message || e); })
-        .finally(() => {
-          remaining -= 1;
-          if (remaining === 0 && !settled) resolve({ ok: false, err: lastErr || "all failed" });
-        });
-    });
-  });
-}
-
+// ============================================================
+// Cookie 管理
+// ============================================================
 const MANUAL_COOKIE = path.join(__dirname, "cookie.txt");
 const AUTO_COOKIE = path.join(os.tmpdir(), "yt_auto_cookies.txt");
 let cookiePath = null;
@@ -238,13 +167,22 @@ function writeNetscapeCookies(setCookieHeaders, file) {
     for (const a of attrs) {
       const [k, v] = a.split("=");
       if (!k) continue;
-      if (k.toLowerCase() === "domain" && v) domain = v.startsWith(".") ? v : "." + v;
+      if (k.toLowerCase() === "domain" && v)
+        domain = v.startsWith(".") ? v : "." + v;
       if (k.toLowerCase() === "path" && v) cookiePathAttr = v;
     }
-    lines.push([domain, "TRUE", cookiePathAttr, "FALSE", expires, name, value].join("\t"));
+    lines.push(
+      [domain, "TRUE", cookiePathAttr, "FALSE", expires, name, value].join("\t")
+    );
   }
-  lines.push([".youtube.com", "TRUE", "/", "FALSE", expires, "CONSENT", "YES+1"].join("\t"));
-  lines.push([".youtube.com", "TRUE", "/", "FALSE", expires, "SOCS", "CAI"].join("\t"));
+  lines.push(
+    [".youtube.com", "TRUE", "/", "FALSE", expires, "CONSENT", "YES+1"].join(
+      "\t"
+    )
+  );
+  lines.push(
+    [".youtube.com", "TRUE", "/", "FALSE", expires, "SOCS", "CAI"].join("\t")
+  );
   fs.writeFileSync(file, lines.join("\n") + "\n");
 }
 
@@ -255,20 +193,16 @@ async function refreshCookies() {
     return cookiePath;
   }
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 6000);
-    const r = await fetch("https://www.youtube.com/", {
+    const r = await fetchWithTimeout("https://www.youtube.com/", 8000, {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "User-Agent": UA_DESKTOP,
         "Accept-Language": "en-US,en;q=0.9",
       },
-      signal: ctrl.signal,
       redirect: "follow",
     });
-    clearTimeout(t);
     let setCookies = [];
-    if (typeof r.headers.getSetCookie === "function") setCookies = r.headers.getSetCookie();
+    if (typeof r.headers.getSetCookie === "function")
+      setCookies = r.headers.getSetCookie();
     else {
       const raw = r.headers.get("set-cookie");
       if (raw) setCookies = raw.split(/,(?=[^;]+=)/);
@@ -287,92 +221,182 @@ async function refreshCookies() {
   }
 }
 
-async function ensureCookies() {
-  if (cookiePath && Date.now() < cookieExpires && fs.existsSync(cookiePath)) return cookiePath;
+async function ensureCookies(force = false) {
+  if (
+    !force &&
+    cookiePath &&
+    Date.now() < cookieExpires &&
+    fs.existsSync(cookiePath)
+  )
+    return cookiePath;
   return await refreshCookies();
 }
 refreshCookies().catch(() => {});
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const cache = new Map();
-const getCache = (id) => {
-  const v = cache.get(id);
-  if (!v) return null;
-  if (Date.now() > v.expires) { cache.delete(id); return null; }
-  return v;
-};
-const setCache = (id, payload) => cache.set(id, { ...payload, expires: Date.now() + CACHE_TTL_MS });
-const inflight = new Map();
-
-function tryYtDlp(args, timeoutMs = 12000) {
+// ============================================================
+// yt-dlp 実行
+// ============================================================
+function runYtDlp(args, timeoutMs = 20000) {
   return new Promise((resolve) => {
     let yt;
-    try { yt = spawn("yt-dlp", args); }
-    catch (e) { return resolve({ ok: false, err: String(e?.message || e) }); }
-    let out = "", err = "", settled = false;
-    const done = (v) => { if (settled) return; settled = true; try { yt.kill("SIGKILL"); } catch {} resolve(v); };
-    const timer = setTimeout(() => done({ ok: false, err: "timeout" }), timeoutMs);
-    yt.stdout.on("data", (d) => (out += d.toString()));
-    yt.stderr.on("data", (d) => (err += d.toString()));
-    yt.on("error", (e) => { clearTimeout(timer); done({ ok: false, err: String(e?.message || e) }); });
-    yt.on("close", (code) => {
-      clearTimeout(timer);
-      const lines = out.trim().split("\n").map((s) => s.trim()).filter(Boolean);
-      if (code === 0 && lines.length && /^https?:\/\//.test(lines[0])) done({ ok: true, urls: lines });
-      else done({ ok: false, err: err.trim().slice(0, 300) || `exit ${code}` });
-    });
-  });
-}
-
-// yt-dlp で JSON を取得して formats を分解
-function tryYtDlpJson(args, timeoutMs = 15000) {
-  return new Promise((resolve) => {
-    let yt;
-    try { yt = spawn("yt-dlp", args); }
-    catch (e) { return resolve({ ok: false, err: String(e?.message || e) }); }
-    let out = "", err = "", settled = false;
-    const done = (v) => { if (settled) return; settled = true; try { yt.kill("SIGKILL"); } catch {} resolve(v); };
-    const timer = setTimeout(() => done({ ok: false, err: "timeout" }), timeoutMs);
-    yt.stdout.on("data", (d) => (out += d.toString()));
-    yt.stderr.on("data", (d) => (err += d.toString()));
-    yt.on("error", (e) => { clearTimeout(timer); done({ ok: false, err: String(e?.message || e) }); });
-    yt.on("close", (code) => {
-      clearTimeout(timer);
+    try {
+      yt = spawn("yt-dlp", args);
+    } catch (e) {
+      return resolve({ ok: false, err: String(e?.message || e) });
+    }
+    let out = "",
+      err = "",
+      settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
       try {
-        const j = JSON.parse(out);
-        done({ ok: true, json: j });
-      } catch {
-        done({ ok: false, err: err.trim().slice(0, 300) || `exit ${code}` });
-      }
+        yt.kill("SIGKILL");
+      } catch {}
+      resolve(v);
+    };
+    const timer = setTimeout(
+      () => done({ ok: false, err: "timeout", stderr: err }),
+      timeoutMs
+    );
+    yt.stdout.on("data", (d) => (out += d.toString()));
+    yt.stderr.on("data", (d) => (err += d.toString()));
+    yt.on("error", (e) => {
+      clearTimeout(timer);
+      done({ ok: false, err: String(e?.message || e) });
+    });
+    yt.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({
+        ok: code === 0,
+        code,
+        stdout: out,
+        stderr: err,
+      });
     });
   });
 }
 
 function baseYtArgs(client) {
   const a = [
-    "--no-warnings", "--no-playlist",
-    "--socket-timeout", "8",
+    "--no-warnings",
+    "--no-playlist",
+    "--no-check-certificate",
+    "--socket-timeout",
+    "10",
+    "--retries",
+    "3",
+    "--force-ipv4",
     "--user-agent",
-    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36",
-    "--extractor-args", `youtube:player_client=${client}`,
+    client === "ios" ? UA_IOS : UA_DESKTOP,
+    "--extractor-args",
+    `youtube:player_client=${client}`,
   ];
   if (cookiePath && fs.existsSync(cookiePath)) a.unshift("--cookies", cookiePath);
   return a;
 }
 
-// yt-dlp -J で全フォーマット取得 → 言語別/HLS分離
+function isAuthError(stderr) {
+  const s = String(stderr || "").toLowerCase();
+  return (
+    s.includes("sign in") ||
+    s.includes("login required") ||
+    s.includes("confirm your age") ||
+    s.includes("http error 403") ||
+    s.includes("http error 401") ||
+    s.includes("nsig extraction failed")
+  );
+}
+
+// yt-dlp -J で JSON 取得 (リトライ付き)
 async function ytDlpFullInfo(videoId) {
   await ensureCookies();
   const url = `https://www.youtube.com/watch?v=${videoId}`;
-  const clients = ["ios", "android", "web_safari", "web"];
-  for (const c of clients) {
-    const r = await tryYtDlpJson([...baseYtArgs(c), "-J", url], 15000);
-    if (r.ok && r.json && Array.isArray(r.json.formats)) return r.json;
+  // 複数 client を試す
+  const clients = [
+    "ios",
+    "android",
+    "web_safari",
+    "web",
+    "mweb",
+    "tv_embedded",
+  ];
+  let lastErr = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const c of clients) {
+      const r = await runYtDlp(
+        [...baseYtArgs(c), "-J", "--skip-download", url],
+        20000
+      );
+      if (r.ok && r.stdout) {
+        try {
+          const j = JSON.parse(r.stdout);
+          if (j && Array.isArray(j.formats) && j.formats.length) return j;
+        } catch {}
+      }
+      lastErr = r.stderr || r.err || "";
+      if (isAuthError(lastErr) && attempt === 0) {
+        await ensureCookies(true);
+        break; // re-loop with refreshed cookies
+      }
+    }
   }
   return null;
 }
 
-// info.formats から非HLSをen/ja別に整理
+// HLS マスターURL を yt-dlp で取得
+async function ytDlpHlsMaster(videoId) {
+  await ensureCookies();
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  // ios / web_safari は HLS を返しやすい
+  const clients = ["ios", "web_safari", "android", "mweb"];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    for (const c of clients) {
+      // -g で URL のみ
+      const r = await runYtDlp(
+        [
+          ...baseYtArgs(c),
+          "-g",
+          "-f",
+          "bestvideo[protocol*=m3u8]/best[protocol*=m3u8]/best",
+          url,
+        ],
+        15000
+      );
+      if (r.ok) {
+        const lines = r.stdout
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const cand = lines.find((u) => /\.m3u8(\?|$)/i.test(u));
+        if (cand) return cand;
+      }
+      if (isAuthError(r.stderr) && attempt === 0) {
+        await ensureCookies(true);
+        break;
+      }
+    }
+  }
+  return null;
+}
+
+async function ytDlpHls1080p(videoId) {
+  const master = await ytDlpHlsMaster(videoId);
+  if (!master) return { ok: false, err: "no hls master" };
+  const text = await fetchManifestText(master, 8000);
+  const variant = pick1080pFromMaster(text, master);
+  return {
+    ok: true,
+    master: { url: master, type: "hls", kind: "hls-master" },
+    variant_1080p: variant
+      ? { ...variant, type: "hls", kind: "hls-1080p" }
+      : null,
+  };
+}
+
+// ============================================================
+// formats を en/ja/m3u8 に分離
+// ============================================================
 function splitFormatsByLang(info) {
   const en = [];
   const ja = [];
@@ -383,25 +407,47 @@ function splitFormatsByLang(info) {
     if (!f || !f.url) continue;
     const proto = String(f.protocol || "").toLowerCase();
     const isHls = proto.includes("m3u8") || /\.m3u8(\?|$)/i.test(f.url);
-    const lang = (f.language || f.audio_language || "").toString().toLowerCase();
-    const langTag = /ja/.test(lang) ? "ja" : /en/.test(lang) ? "en" : "";
+
+    // 言語判定
+    const langRaw = (
+      f.language ||
+      f.audio_language ||
+      f.format_note ||
+      ""
+    ).toString().toLowerCase();
+    let langTag = "";
+    if (/(^|[^a-z])ja([^a-z]|$)|japan|日本/.test(langRaw)) langTag = "ja";
+    else if (/(^|[^a-z])en([^a-z]|$)|english/.test(langRaw)) langTag = "en";
+
+    const hasV = f.vcodec && f.vcodec !== "none";
+    const hasA = f.acodec && f.acodec !== "none";
+    const kind =
+      hasV && hasA ? "muxed" : hasV ? "video" : hasA ? "audio" : "unknown";
+
+    const quality =
+      f.format_note ||
+      (f.height ? `${f.height}p` : undefined) ||
+      f.resolution;
+
     const entry = {
       url: f.url,
       itag: f.format_id,
       mime: f.ext,
       container: f.container || f.ext,
-      quality: f.format_note || f.height ? `${f.height || ""}p`.replace("undefinedp", "") : undefined,
+      quality,
       height: f.height,
       width: f.width,
-      bitrate: f.tbr ? Math.round(f.tbr * 1000) : (f.abr ? Math.round(f.abr * 1000) : undefined),
+      bitrate: f.tbr
+        ? Math.round(f.tbr * 1000)
+        : f.abr
+        ? Math.round(f.abr * 1000)
+        : undefined,
       vcodec: f.vcodec,
       acodec: f.acodec,
       language: langTag,
-      kind: (f.vcodec && f.vcodec !== "none" && f.acodec && f.acodec !== "none")
-        ? "muxed"
-        : (f.vcodec && f.vcodec !== "none" ? "video" : (f.acodec && f.acodec !== "none" ? "audio" : "unknown")),
+      kind,
+      type: kind,
     };
-    entry.type = entry.kind;
 
     if (isHls) {
       m3u8List.push({ ...entry, type: "hls", kind: "hls" });
@@ -410,86 +456,221 @@ function splitFormatsByLang(info) {
     if (langTag === "ja") ja.push(entry);
     else if (langTag === "en") en.push(entry);
     else {
-      // 言語不明な動画 / 音声不要トラックは両方に入れる(汎用)
+      // 言語不明 (映像のみ・音声不明トラック含む) は両方に入れる
       en.push(entry);
       ja.push(entry);
     }
   }
 
-  const sortQ = (a, b) => (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0);
+  const sortQ = (a, b) =>
+    (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0);
   en.sort(sortQ);
   ja.sort(sortQ);
   return { en, ja, m3u8List };
 }
 
-// HLS マスター取得 → 1080p variant のみ返す
-async function ytDlpHls1080p(videoId) {
-  await ensureCookies();
-  const url = `https://www.youtube.com/watch?v=${videoId}`;
-  const clients = ["web_safari", "ios", "android"];
-  let master = null;
-
-  for (const c of clients) {
-    const r = await tryYtDlp(
-      ["-g", ...baseYtArgs(c), "-f", "best[protocol^=m3u8]/best", url],
-      12000
-    );
-    if (r.ok) {
-      const cand = r.urls.find((u) => /\.m3u8(\?|$)/i.test(u));
-      if (cand) { master = cand; break; }
-    }
-  }
-  if (!master) return { ok: false, err: "no hls master" };
-
-  const { text } = await fetchManifestUrls(master, 7000);
-  const variant = pick1080pFromMaster(text, master);
-  const result = {
-    ok: true,
-    master: { url: master, type: "hls", kind: "hls-master" },
-    variant_1080p: variant ? { ...variant, type: "hls", kind: "hls-1080p" } : null,
-  };
-  return result;
+// ============================================================
+// Invidious / Piped フォールバック
+// ============================================================
+function detectLangStr(s) {
+  const v = String(s || "").toLowerCase();
+  if (/ja|japanese|日本/.test(v)) return "ja";
+  if (/en|english/.test(v)) return "en";
+  return "";
 }
 
+async function tryInvidious(videoId, perTimeout = 7000) {
+  return await new Promise((resolve) => {
+    let remaining = INV_INSTANCES.length;
+    let lastErr = "";
+    let settled = false;
+    if (remaining === 0) return resolve({ ok: false, err: "no instances" });
+
+    INV_INSTANCES.forEach((base) => {
+      const url = `${base.replace(/\/+$/, "")}/api/v1/videos/${encodeURIComponent(
+        videoId
+      )}?fields=hlsUrl,dashUrl,formatStreams,adaptiveFormats`;
+      fetchWithTimeout(url, perTimeout)
+        .then(async (r) => {
+          if (!r.ok) throw new Error(`${base} -> ${r.status}`);
+          const j = await r.json();
+          const urls = [];
+          const urls_m3u8 = [];
+
+          const push = (arr, fallback) => {
+            if (!Array.isArray(arr)) return;
+            for (const f of arr) {
+              if (!f || !f.url) continue;
+              const mime = (f.type || "").split(";")[0];
+              const hasV = mime.startsWith("video/");
+              const hasA = mime.startsWith("audio/") || !!f.audioQuality;
+              const kind =
+                fallback === "muxed"
+                  ? "muxed"
+                  : hasV && hasA
+                  ? "muxed"
+                  : hasV
+                  ? "video"
+                  : hasA
+                  ? "audio"
+                  : "unknown";
+              urls.push({
+                url: f.url,
+                kind,
+                type: kind,
+                mime,
+                itag: f.itag,
+                container: f.container,
+                quality: f.qualityLabel || f.quality || f.resolution,
+                bitrate: parseInt(f.bitrate || 0) || undefined,
+                language: detectLangStr(
+                  f.audioTrack?.id ||
+                    f.audioTrack?.displayName ||
+                    f.language ||
+                    ""
+                ),
+              });
+            }
+          };
+          push(j.formatStreams, "muxed");
+          push(j.adaptiveFormats, "adaptive");
+
+          if (j.hlsUrl)
+            urls_m3u8.push({
+              url: j.hlsUrl,
+              type: "hls",
+              kind: "hls-master",
+            });
+
+          if (urls.length || urls_m3u8.length) {
+            if (settled) return;
+            settled = true;
+            resolve({ ok: true, urls, urls_m3u8, source: `invidious:${base}` });
+          } else throw new Error(`${base} -> empty`);
+        })
+        .catch((e) => {
+          lastErr = String(e?.message || e);
+        })
+        .finally(() => {
+          remaining -= 1;
+          if (remaining === 0 && !settled)
+            resolve({ ok: false, err: lastErr || "all failed" });
+        });
+    });
+  });
+}
+
+async function tryPiped(videoId, perTimeout = 7000) {
+  return await new Promise((resolve) => {
+    let remaining = PIPED_INSTANCES.length;
+    let settled = false;
+    let lastErr = "";
+    if (remaining === 0) return resolve({ ok: false, err: "no piped" });
+
+    PIPED_INSTANCES.forEach((base) => {
+      const url = `${base.replace(/\/+$/, "")}/streams/${encodeURIComponent(
+        videoId
+      )}`;
+      fetchWithTimeout(url, perTimeout)
+        .then(async (r) => {
+          if (!r.ok) throw new Error(`${base} -> ${r.status}`);
+          const j = await r.json();
+          const urls = [];
+          const urls_m3u8 = [];
+          const push = (arr) => {
+            if (!Array.isArray(arr)) return;
+            for (const f of arr) {
+              if (!f || !f.url) continue;
+              const isVideo = f.videoOnly === false || f.videoOnly === true;
+              const kind = f.videoOnly
+                ? "video"
+                : isVideo
+                ? "muxed"
+                : "audio";
+              urls.push({
+                url: f.url,
+                kind,
+                type: kind,
+                mime: f.mimeType,
+                itag: f.itag,
+                quality: f.quality,
+                bitrate: f.bitrate,
+                language: detectLangStr(
+                  f.audioTrackId || f.audioTrackName || ""
+                ),
+              });
+            }
+          };
+          push(j.videoStreams);
+          push(j.audioStreams);
+          if (j.hls)
+            urls_m3u8.push({ url: j.hls, type: "hls", kind: "hls-master" });
+          if (urls.length || urls_m3u8.length) {
+            if (settled) return;
+            settled = true;
+            resolve({ ok: true, urls, urls_m3u8, source: `piped:${base}` });
+          } else throw new Error(`${base} -> empty`);
+        })
+        .catch((e) => {
+          lastErr = String(e?.message || e);
+        })
+        .finally(() => {
+          remaining -= 1;
+          if (remaining === 0 && !settled)
+            resolve({ ok: false, err: lastErr || "all failed" });
+        });
+    });
+  });
+}
+
+// ============================================================
+// payload 構築
+// ============================================================
 async function buildVideoPayload(videoId) {
-  // 並行で HLS と JSON 情報を取得
-  const [hls, info, inv] = await Promise.all([
+  const [hls, info, inv, piped] = await Promise.all([
     ytDlpHls1080p(videoId).catch(() => ({ ok: false })),
     ytDlpFullInfo(videoId).catch(() => null),
-    tryInvidious(videoId, 6000).catch(() => ({ ok: false })),
+    tryInvidious(videoId).catch(() => ({ ok: false })),
+    tryPiped(videoId).catch(() => ({ ok: false })),
   ]);
 
-  let en = [], ja = [], m3u8List = [];
+  let en = [],
+    ja = [],
+    m3u8List = [];
 
   if (info) {
     const s = splitFormatsByLang(info);
-    en = s.en; ja = s.ja; m3u8List = s.m3u8List;
+    en = s.en;
+    ja = s.ja;
+    m3u8List = s.m3u8List;
   }
 
-  // Invidious からも補完
-  if (inv && inv.ok) {
-    if (Array.isArray(inv.urls)) {
-      for (const u of inv.urls) {
+  const mergeFallback = (src) => {
+    if (!src || !src.ok) return;
+    if (Array.isArray(src.urls)) {
+      for (const u of src.urls) {
         const e = { ...u };
         if (e.language === "ja") ja.push(e);
         else if (e.language === "en") en.push(e);
-        else { en.push(e); ja.push(e); }
+        else {
+          en.push(e);
+          ja.push(e);
+        }
       }
     }
-    if (Array.isArray(inv.urls_m3u8)) m3u8List.push(...inv.urls_m3u8);
-  }
+    if (Array.isArray(src.urls_m3u8)) m3u8List.push(...src.urls_m3u8);
+  };
+  mergeFallback(inv);
+  mergeFallback(piped);
 
-  // HLS 1080p を最優先で先頭へ
+  // m3u8 1080p を最優先で先頭へ
   const m3u8Out = [];
   if (hls.ok) {
     if (hls.variant_1080p) m3u8Out.push(hls.variant_1080p);
     if (hls.master) m3u8Out.push(hls.master);
   }
-  for (const m of m3u8List) {
-    if (!m3u8Out.find((x) => x.url === m.url)) m3u8Out.push(m);
-  }
+  for (const m of m3u8List) m3u8Out.push(m);
 
-  // 重複削除
   const dedup = (arr) => {
     const seen = new Set();
     return arr.filter((x) => {
@@ -500,15 +681,41 @@ async function buildVideoPayload(videoId) {
     });
   };
 
+  const sources = [];
+  if (info) sources.push("yt-dlp");
+  if (hls.ok) sources.push("yt-dlp-hls");
+  if (inv?.ok) sources.push(inv.source);
+  if (piped?.ok) sources.push(piped.source);
+
   return {
     "English-ver": dedup(en),
     "japanese-ver": dedup(ja),
     urls_m3u8: dedup(m3u8Out),
-    source: info ? "yt-dlp+invidious" : (inv?.source || "unknown"),
+    source: sources.join(",") || "none",
   };
 }
 
-function validId(id) { return /^[\w-]{6,20}$/.test(id); }
+// ============================================================
+// キャッシュ + ルーティング
+// ============================================================
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const cache = new Map();
+const getCache = (id) => {
+  const v = cache.get(id);
+  if (!v) return null;
+  if (Date.now() > v.expires) {
+    cache.delete(id);
+    return null;
+  }
+  return v;
+};
+const setCache = (id, payload) =>
+  cache.set(id, { ...payload, expires: Date.now() + CACHE_TTL_MS });
+const inflight = new Map();
+
+function validId(id) {
+  return /^[\w-]{6,20}$/.test(id);
+}
 
 async function getOrBuild(id) {
   const cached = getCache(id);
@@ -519,19 +726,26 @@ async function getOrBuild(id) {
     inflight.set(id, p);
   }
   const r = await p;
-  setCache(id, r);
+  // 取得成功した時のみキャッシュ
+  if (
+    (r["English-ver"] && r["English-ver"].length) ||
+    (r["japanese-ver"] && r["japanese-ver"].length) ||
+    (r.urls_m3u8 && r.urls_m3u8.length)
+  )
+    setCache(id, r);
   return r;
 }
 
-// メイン: 全部入り。urls の下に English-ver / japanese-ver を表示
 app.get("/api/video/:id", async (req, res) => {
   const { id } = req.params;
   res.setHeader("Cache-Control", "public, max-age=120");
-  if (!validId(id)) {
+  if (!validId(id))
     return res.status(200).json({
-      id, urls: { "English-ver": [], "japanese-ver": [] }, urls_m3u8: [], error: "invalid id",
+      id,
+      urls: { "English-ver": [], "japanese-ver": [] },
+      urls_m3u8: [],
+      error: "invalid id",
     });
-  }
   try {
     const r = await getOrBuild(id);
     return res.status(200).json({
@@ -546,48 +760,64 @@ app.get("/api/video/:id", async (req, res) => {
     });
   } catch (e) {
     return res.status(200).json({
-      id, urls: { "English-ver": [], "japanese-ver": [] }, urls_m3u8: [],
+      id,
+      urls: { "English-ver": [], "japanese-ver": [] },
+      urls_m3u8: [],
       error: String(e?.message || e),
     });
   }
 });
 
-// type1 = 英語のみ
 app.get("/api/video/:id/type1", async (req, res) => {
   const { id } = req.params;
   res.setHeader("Cache-Control", "public, max-age=120");
-  if (!validId(id)) return res.status(200).json({ id, "English-ver": [], error: "invalid id" });
+  if (!validId(id))
+    return res.status(200).json({ id, "English-ver": [], error: "invalid id" });
   try {
     const r = await getOrBuild(id);
-    return res.status(200).json({ id, "English-ver": r["English-ver"] || [], source: r.source });
+    return res
+      .status(200)
+      .json({ id, "English-ver": r["English-ver"] || [], source: r.source });
   } catch (e) {
-    return res.status(200).json({ id, "English-ver": [], error: String(e?.message || e) });
+    return res
+      .status(200)
+      .json({ id, "English-ver": [], error: String(e?.message || e) });
   }
 });
 
-// type2 = 日本語のみ
 app.get("/api/video/:id/type2", async (req, res) => {
   const { id } = req.params;
   res.setHeader("Cache-Control", "public, max-age=120");
-  if (!validId(id)) return res.status(200).json({ id, "japanese-ver": [], error: "invalid id" });
+  if (!validId(id))
+    return res
+      .status(200)
+      .json({ id, "japanese-ver": [], error: "invalid id" });
   try {
     const r = await getOrBuild(id);
-    return res.status(200).json({ id, "japanese-ver": r["japanese-ver"] || [], source: r.source });
+    return res
+      .status(200)
+      .json({ id, "japanese-ver": r["japanese-ver"] || [], source: r.source });
   } catch (e) {
-    return res.status(200).json({ id, "japanese-ver": [], error: String(e?.message || e) });
+    return res
+      .status(200)
+      .json({ id, "japanese-ver": [], error: String(e?.message || e) });
   }
 });
 
-// m3u8 のみ (1080p優先)
 app.get("/api/video/:id/m3u8", async (req, res) => {
   const { id } = req.params;
   res.setHeader("Cache-Control", "public, max-age=120");
-  if (!validId(id)) return res.status(200).json({ id, urls_m3u8: [], error: "invalid id" });
+  if (!validId(id))
+    return res.status(200).json({ id, urls_m3u8: [], error: "invalid id" });
   try {
     const r = await getOrBuild(id);
-    return res.status(200).json({ id, urls_m3u8: r.urls_m3u8 || [], source: r.source });
+    return res
+      .status(200)
+      .json({ id, urls_m3u8: r.urls_m3u8 || [], source: r.source });
   } catch (e) {
-    return res.status(200).json({ id, urls_m3u8: [], error: String(e?.message || e) });
+    return res
+      .status(200)
+      .json({ id, urls_m3u8: [], error: String(e?.message || e) });
   }
 });
 
@@ -596,10 +826,13 @@ app.get("/healthz", (_req, res) =>
     ok: true,
     cookie: cookiePath ? path.basename(cookiePath) : null,
     invidious: INV_INSTANCES.length,
+    piped: PIPED_INSTANCES.length,
   })
 );
 
 process.on("uncaughtException", (e) => console.error("uncaughtException:", e));
-process.on("unhandledRejection", (e) => console.error("unhandledRejection:", e));
+process.on("unhandledRejection", (e) =>
+  console.error("unhandledRejection:", e)
+);
 
 app.listen(PORT, () => console.log(`listening on ${PORT}`));
